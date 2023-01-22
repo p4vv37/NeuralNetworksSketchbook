@@ -5,23 +5,23 @@ import random
 import pathlib
 import requests
 import mathutils
+import shutil
 
 
-# image = bpy.data.images.load( imgFile ) 
-# np_array = np.asarray(image.pixels)
+FRAME_CODE =  "{0:0>4}".format(bpy.context.scene.frame_current )
 
 ROOT_DIR = r"/home/pawel/git/NeuralNetworksSketchbook/sd_texturing/tmp"
-# PROMPT = "A wooden box, shadowless product lighting, flat white background"
-PROMPT = "A wooden box"
-N_PROMPT = "dark, shadows, bright spots"
+ROOT_PATH = pathlib.Path(ROOT_DIR)
+PROMPT = "A photo of a Donut on a white plate made in Blender, white plate, with pink frosting, highly detailed, trending on artstation, HQ HD UHD, Unreal Engine"
+N_PROMPT = "blue topping, dark, shadows, bright spots, glossy, pink plate, white frosting, everything pink"
 OUTPUT_TEXTURE_PATH = pathlib.Path(ROOT_DIR) / "txt.png"
-OUTPUT_UV_PATH = pathlib.Path(ROOT_DIR) / "uv0001.exr"
-OUTPUT_DEPTH_PATH = pathlib.Path(ROOT_DIR) / "depth0001.bmp"
-OUTPUT_DIFFUSE_PATH = pathlib.Path(ROOT_DIR) / "diffuse0001.bmp"
-OUTPUT_RENDER_PATH = pathlib.Path(ROOT_DIR) / "Image0001.bmp"
-OUTPUT_ALPHA_PATH = pathlib.Path(ROOT_DIR) / "alpha0001.png"
+OUTPUT_UV_PATH = pathlib.Path(ROOT_DIR) / F"uv{FRAME_CODE}.exr"
+OUTPUT_DEPTH_PATH = pathlib.Path(ROOT_DIR) / F"depth{FRAME_CODE}.bmp"
+OUTPUT_DIFFUSE_PATH = pathlib.Path(ROOT_DIR) / F"diffuse{FRAME_CODE}.bmp"
+OUTPUT_RENDER_PATH = pathlib.Path(ROOT_DIR) / F"Image{FRAME_CODE}.png"
+OUTPUT_ALPHA_PATH = pathlib.Path(ROOT_DIR) / F"alpha{FRAME_CODE}.png"
 API_URL = "http://127.0.0.1:7000"
-SEED = 1024
+SEED = 2048
 
 
 def setup():    
@@ -33,13 +33,6 @@ def setup():
         if node.label == "Output":
             node.base_path = str(pathlib.Path(ROOT_DIR))
      
-    #output_image = None
-    #for img in bpy.data.images:
-    #    if img.filepath == str(OUTPUT_TEXTURE_PATH):
-    #        output_image = img
-    #        break
-    #if output_image is None or not OUTPUT_TEXTURE_PATH.exists():
-    #    output_image = bpy.data.images.new(str(OUTPUT_TEXTURE_PATH), width=512, height=512)
     output_image = bpy.data.images.new(str(OUTPUT_TEXTURE_PATH), width=512, height=512)
     
     output_image.file_format = 'PNG'
@@ -52,7 +45,15 @@ def setup():
             node.image = output_image
 
 
-def render_view(angle, z_offset=2, radius=10):
+def copy_files_for_preview(idx):
+    directory = ROOT_PATH / str(idx)
+    directory.mkdir(parents=True, exist_ok=True)
+    files = [f for f in ROOT_PATH.iterdir() if f.is_file()]
+    for f in files: 
+        shutil.copyfile(ROOT_PATH / f.name, ROOT_PATH / str(idx) / f.name)
+
+
+def render_view(angle, z_offset=1, radius=7):
     print(F"Rendering: {angle}")
     # Reload textures:
     for img in bpy.data.images:
@@ -67,8 +68,7 @@ def render_view(angle, z_offset=2, radius=10):
     render.resolution_y = 512
 
     # Set camera position
-    #camera = bpy.data.objects['Camera']  # Make sure your first camera is named 'MainCamera'
-    target_object = bpy.data.objects['Target']  # The camera will face this object. /!\ Naming
+    target_object = bpy.data.objects['Target']  # NAMING: Target == main object
 
     z = target_object.location[2] + z_offset
     angle = 2 * math.pi * angle/360
@@ -120,18 +120,36 @@ def img2img(label):
     }
     response = requests.get(API_URL + "/depth2img_step", json=data)
 
-setup()
 
-number_of_renders = 6
+def finish_texture():
+    data = {
+        "prompt": PROMPT,
+        "n_propmt": N_PROMPT,
+        "depth": str(OUTPUT_DEPTH_PATH),
+        "uv": str(OUTPUT_UV_PATH),
+        "out_txt": str(OUTPUT_TEXTURE_PATH),
+        "render": str(OUTPUT_RENDER_PATH),
+        "alpha": str(OUTPUT_ALPHA_PATH),
+        "diffuse": str(OUTPUT_DIFFUSE_PATH),
+        "seed": SEED
+    }
+    response = requests.get(API_URL + "/finish_texture", json=data)
+    
+    
+setup()
+copy_files_for_preview(0)
+
+number_of_renders = 8
 for num in range(number_of_renders):
+    
     angle = 360*num/(number_of_renders + 1)
     render_view(angle)
     depth2img()
+    copy_files_for_preview(num + 1)
+    
 render_view(0, 6, 2)
 depth2img()
+finish_texture()
+render_view(0)
+copy_files_for_preview(number_of_renders + 2)
 print("end")
-#render_view(90)mg2img(LABEL)
-#render_view(180)
-#img2img(LABEL)
-#render_view(240)
-#img2img(LABEL)
