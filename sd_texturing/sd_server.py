@@ -88,6 +88,7 @@ class Handler(BaseHTTPRequestHandler):
             for x in range(out_img_arr.shape[0]):
                 for y in range(out_img_arr.shape[1]):
                     if sum(out_img_arr[x, y]) > 0:
+                        continue
                         out_img_arr[x, y] = (wip_out_img_arr[x][y] / 2 + out_img_arr[x][y] / 2).astype(int)
                     else:
                         out_img_arr[x, y] = wip_out_img_arr[x][y]
