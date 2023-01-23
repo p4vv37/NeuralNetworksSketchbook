@@ -12,3 +12,4 @@ Few notebooks and scripts.
 
 [3D object texture generation with Blender and SD](../../tree/main/sd_texturing)
 
+https://user-images.githubusercontent.com/3722204/213944732-2a86cb32-83b0-43c3-b83b-8fa765138b24.mp4
