@@ -8,7 +8,6 @@ import mathutils
 import shutil
 
 FRAME_CODE = "{0:0>4}".format(bpy.context.scene.frame_current)
-
 ROOT_DIR = r"/home/pawel/git/NeuralNetworksSketchbook/sd_texturing/tmp"
 ROOT_PATH = pathlib.Path(ROOT_DIR)
 PROMPT = "An oil painting of a pirate treasure chest, gold, coins, highly detailed, trending on artstation, concept art, Professional"
@@ -70,10 +69,10 @@ def render_view(angle, z_offset=1, radius=7):
     target_object = bpy.data.objects['Target']  # NAMING: Target == main object
 
     z = target_object.location[2] + z_offset
-    angle = 2 * math.pi * angle / 360
+    angle_radians = 2 * math.pi * angle / 360
 
     # Randomly place the camera on a circle around the object at the same height as the main camera
-    new_camera_pos = mathutils.Vector((radius * math.cos(angle), radius * math.sin(angle), z))
+    new_camera_pos = mathutils.Vector((radius * math.cos(angle_radians), radius * math.sin(angle_radians), z))
 
     bpy.ops.object.camera_add(enter_editmode=False, location=new_camera_pos)
     camera = bpy.context.object
@@ -90,50 +89,31 @@ def render_view(angle, z_offset=1, radius=7):
     bpy.data.objects.remove(camera, do_unlink=True)
 
 
-def depth2img():
-    data = {
+def generate_data():
+    return {
         "prompt": PROMPT,
-        "n_propmt": N_PROMPT,
+        "n_prompt": N_PROMPT,
         "depth": str(OUTPUT_DEPTH_PATH),
         "uv": str(OUTPUT_UV_PATH),
         "out_txt": str(OUTPUT_TEXTURE_PATH),
         "render": str(OUTPUT_RENDER_PATH),
         "alpha": str(OUTPUT_ALPHA_PATH),
         "diffuse": str(OUTPUT_DIFFUSE_PATH),
+        "depth_based_mixing": 1,
         "seed": SEED
     }
-    response = requests.get(API_URL + "/depth2img_step", json=data)
 
 
-def img2img(label):
-    data = {
-        "prompt": PROMPT,
-        "n_propmt": N_PROMPT,
-        "depth": str(OUTPUT_DEPTH_PATH),
-        "uv": str(OUTPUT_UV_PATH),
-        "out_txt": str(OUTPUT_TEXTURE_PATH),
-        "render": str(OUTPUT_RENDER_PATH),
-        "alpha": str(OUTPUT_ALPHA_PATH),
-        "diffuse": str(OUTPUT_DIFFUSE_PATH),
-        "seed": SEED,
-        "strength": "0.85"
-    }
+def depth2img():
+    data = generate_data()
     response = requests.get(API_URL + "/depth2img_step", json=data)
+    print(response.status_code, response.text)
 
 
 def finish_texture():
-    data = {
-        "prompt": PROMPT,
-        "n_propmt": N_PROMPT,
-        "depth": str(OUTPUT_DEPTH_PATH),
-        "uv": str(OUTPUT_UV_PATH),
-        "out_txt": str(OUTPUT_TEXTURE_PATH),
-        "render": str(OUTPUT_RENDER_PATH),
-        "alpha": str(OUTPUT_ALPHA_PATH),
-        "diffuse": str(OUTPUT_DIFFUSE_PATH),
-        "seed": SEED
-    }
+    data = generate_data()
     response = requests.get(API_URL + "/finish_texture", json=data)
+    print(response.status_code, response.text)
 
 
 if __name__ == "__main__":
@@ -146,7 +126,7 @@ if __name__ == "__main__":
         render_view(angle)
         depth2img()
         copy_files_for_preview(num + 1)
-        
+
     number_of_renders = 3
     for num in range(number_of_renders):
         angle = 360 * num / (number_of_renders + 1) + 45
@@ -160,4 +140,3 @@ if __name__ == "__main__":
     render_view(0)
     copy_files_for_preview(number_of_renders + 2 + 4)
     print("end")
-        

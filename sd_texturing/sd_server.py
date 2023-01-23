@@ -2,20 +2,37 @@ import pathlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import torch
-from diffusers import StableDiffusionDepth2ImgPipeline, StableDiffusionImg2ImgPipeline
+from diffusers import StableDiffusionDepth2ImgPipeline
 from PIL import Image
 import numpy as np
 import cv2
 import os
 
 
+def finish_texture(out_img_arr, partial=False):
+    for x in range(out_img_arr.shape[0]):
+        for y in range(out_img_arr.shape[1]):
+            color = out_img_arr[x][y]
+            if sum(color) < 0.00001:
+                number_of_colors = 0
+                out_color = np.array([0, 0, 0])
+                for x1, y1 in [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]:
+                    if x1 >= out_img_arr.shape[0] or y1 >= out_img_arr.shape[1]:
+                        continue
+                    c = out_img_arr[x1][y1]
+                    if sum(c) > 0.00001 and (not partial or number_of_colors >= 2):
+                        out_color += c
+                        number_of_colors += 1
+                if number_of_colors == 0:
+                    continue
+                out_color = out_color / float(number_of_colors)
+                out_img_arr[x, y] = out_color
+    return out_img_arr
+
+
 class Handler(BaseHTTPRequestHandler):
     depth2img_pipe = StableDiffusionDepth2ImgPipeline.from_pretrained(
         "stabilityai/stable-diffusion-2-depth",
-        torch_dtype=torch.float16,
-    ).to("cuda")
-    img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-2",
         torch_dtype=torch.float16,
     ).to("cuda")
 
@@ -27,7 +44,7 @@ class Handler(BaseHTTPRequestHandler):
         data = json.loads(str(field_data, "UTF-8"))
 
         prompt = data.get("prompt")
-        n_propmt = data.get("n_propmt", "")
+        n_prompt = data.get("n_prompt", "")
 
         depth_path = data.get("depth")
         src_path = data.get("render")
@@ -36,6 +53,7 @@ class Handler(BaseHTTPRequestHandler):
         out_txt_path = data.get("out_txt")
         diffuse_path = data.get("diffuse")
         strength = float(data.get("strength", 1.0))
+        depth_based_mixing = int(data.get("depth_based_mixing", False))
 
         seed = data.get("seed", 1024)
         generator = torch.Generator(device="cuda").manual_seed(seed)
@@ -49,13 +67,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('python 3 ', 'text/html')
         self.end_headers()
+
         if self.path == "/depth2img_step":
             init_img = Image.open(src_path)
-            depth_img = np.array(Image.open(depth_path))
-            depth_img *= 1000
-            depth_img += 1000
-            depth_img = Image.fromarray(depth_img)
-            img = self.depth2img_pipe(prompt=prompt, image=init_img, depth_map=depth_img, negative_prompt=n_propmt,
+            depth_arr = np.array(Image.open(depth_path))
+            # depth_img *= 1000
+            # depth_img += 1000
+            depth_img = Image.fromarray(depth_arr)
+            img = self.depth2img_pipe(prompt=prompt, image=init_img, depth_map=depth_img, negative_prompt=n_prompt,
                                       guidance_scale=9, strength=strength, generator=generator, num_inference_steps=50,
                                       num_images_per_prompt=1).images[0]
             img.save(pathlib.Path(src_path).parent / "prev.png")
@@ -67,13 +86,13 @@ class Handler(BaseHTTPRequestHandler):
             uv_img = cv2.cvtColor(uv_img, cv2.COLOR_BGR2RGB)
             out_img = Image.open(out_txt_path)
             alpha_img = Image.open(alpha_path)
-            diffuse_img = Image.open(diffuse_path)
+            # diffuse_img = Image.open(diffuse_path)
 
             uv_img_arr = np.asarray(uv_img)
             img_arr = np.asarray(img)
             out_img_arr = np.array(out_img)
             wip_out_img_arr = out_img_arr.copy()
-            diffuse_img_arr = np.array(diffuse_img)
+            # diffuse_img_arr = np.array(diffuse_img)
             src_alpha_arr = np.array(alpha_img)
 
             for x in range(uv_img_arr.shape[0]):
@@ -81,50 +100,34 @@ class Handler(BaseHTTPRequestHandler):
                     u, v, w = uv_img_arr[x][y]
                     a = src_alpha_arr[x][y]
                     if a > 244 and sum([u, v, w]) > 0.00000001:
-                        txt_u = int(out_img_arr.shape[1] - 1) - int(out_img_arr.shape[1] * v) - 1
-                        txt_v = int(out_img_arr.shape[0] * u)
-                        wip_out_img_arr[txt_u, txt_v] = img_arr[x][y]
+                        u2 = int(out_img_arr.shape[1] - 1) - int(out_img_arr.shape[1] * v) - 1
+                        v2 = int(out_img_arr.shape[0] * u)
+                        if depth_based_mixing and sum(out_img_arr[u2, v2]) > 0:
+                            depth = depth_arr[x][y]
+                            factor = np.clip(depth, 0, 0.5)
+                            factor *= 2
+                            wip_out_img_arr[u2, v2] = img_arr[x][y] * (1 - factor) + out_img_arr[u2, v2] * factor
+                        else:
+                            wip_out_img_arr[u2, v2] = img_arr[x][y]
 
-            for x in range(out_img_arr.shape[0]):
-                for y in range(out_img_arr.shape[1]):
-                    if sum(out_img_arr[x, y]) > 0:
-                        continue
-                        out_img_arr[x, y] = (wip_out_img_arr[x][y] / 2 + out_img_arr[x][y] / 2).astype(int)
-                    else:
-                        out_img_arr[x, y] = wip_out_img_arr[x][y]
+            if not depth_based_mixing:
+                for x in range(out_img_arr.shape[0]):
+                    for y in range(out_img_arr.shape[1]):
+                        if sum(out_img_arr[x, y]) == 0:
+                            out_img_arr[x, y] = wip_out_img_arr[x][y]
 
-            print(out_img_arr.shape)
+            out_img_arr = finish_texture(out_img_arr, partial=True)
             out = Image.fromarray(out_img_arr.astype('uint8'), 'RGB')
             out.save(out_txt_path)
-
-        if self.path == "/img2img_step":
-            pass
 
         if self.path == "/finish_texture":
             out_img = Image.open(out_txt_path)
             out_img_arr = np.array(out_img)
-
-            for x in range(out_img_arr.shape[0]):
-                for y in range(out_img_arr.shape[1]):
-                    color = out_img_arr[x][y]
-                    if sum(color) < 0.00001:
-                        number_of_colors = 0
-                        out_color = np.array([0, 0, 0])
-                        for x1, y1 in [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]:
-                            if x1 >= out_img_arr.shape[0] or y1 >= out_img_arr.shape[1]:
-                                continue
-                            c = out_img_arr[x1][y1]
-                            if sum(c) > 0.00001:
-                                out_color += c
-                                number_of_colors += 1
-                        if number_of_colors == 0:
-                            continue
-                        out_color = out_color / float(number_of_colors)
-                        out_img_arr[x, y] = out_color
+            out_img_arr = finish_texture(out_img_arr)
             out = Image.fromarray(out_img_arr.astype('uint8'), 'RGB')
             out.save(out_txt_path)
 
-        message = "Python 3 html server"
+        message = F"Request {self.path} processed"
         print(message)
         self.wfile.write(bytes(message, "utf8"))
 
