@@ -10,20 +10,39 @@ import os
 
 
 def finish_texture(out_img_arr, partial=False):
+
     for x in range(out_img_arr.shape[0]):
         for y in range(out_img_arr.shape[1]):
             color = out_img_arr[x][y]
             if sum(color) < 0.00001:
                 number_of_colors = 0
                 out_color = np.array([0, 0, 0])
-                for x1, y1 in [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]:
+                for x1, y1 in [[x, y - 1], [x, y + 1]]:
                     if x1 >= out_img_arr.shape[0] or y1 >= out_img_arr.shape[1]:
                         continue
                     c = out_img_arr[x1][y1]
-                    if sum(c) > 0.00001 and (not partial or number_of_colors >= 2):
+                    if sum(c) > 0.00001:
                         out_color += c
                         number_of_colors += 1
-                if number_of_colors == 0:
+                if number_of_colors == 0 or (partial and number_of_colors < 2):
+                    continue
+                out_color = out_color / float(number_of_colors)
+                out_img_arr[x, y] = out_color
+
+    for x in range(out_img_arr.shape[0]):
+        for y in range(out_img_arr.shape[1]):
+            color = out_img_arr[x][y]
+            if sum(color) < 0.00001:
+                number_of_colors = 0
+                out_color = np.array([0, 0, 0])
+                for x1, y1 in [[x - 1, y], [x + 1, y]]:
+                    if x1 >= out_img_arr.shape[0] or y1 >= out_img_arr.shape[1]:
+                        continue
+                    c = out_img_arr[x1][y1]
+                    if sum(c) > 0.00001:
+                        out_color += c
+                        number_of_colors += 1
+                if number_of_colors == 0 or (partial and number_of_colors < 2):
                     continue
                 out_color = out_color / float(number_of_colors)
                 out_img_arr[x, y] = out_color
@@ -52,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
         alpha_path = data.get("alpha")
         out_txt_path = data.get("out_txt")
         diffuse_path = data.get("diffuse")
-        strength = float(data.get("strength", 1.0))
+        strength = float(data.get("strength", 0.8))
         depth_based_mixing = int(data.get("depth_based_mixing", False))
 
         seed = data.get("seed", 1024)
@@ -70,26 +89,34 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/depth2img_step":
             init_img = Image.open(src_path)
+            init_img_arr = np.array(init_img)
+            diffuse_img = Image.open(diffuse_path)
             depth_arr = np.array(Image.open(depth_path))
-            # depth_img *= 1000
-            # depth_img += 1000
             depth_img = Image.fromarray(depth_arr)
-            img = self.depth2img_pipe(prompt=prompt, image=init_img, depth_map=depth_img, negative_prompt=n_prompt,
+            img = self.depth2img_pipe(prompt=prompt, image=diffuse_img, depth_map=depth_img, negative_prompt=n_prompt,
                                       guidance_scale=9, strength=strength, generator=generator, num_inference_steps=50,
                                       num_images_per_prompt=1).images[0]
             img.save(pathlib.Path(src_path).parent / "prev.png")
 
             os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
-            uv_img = cv2.imread(uv_path,
-                                cv2.IMREAD_UNCHANGED)
+            scaled_img_size = [x*2 for x in init_img.size]
+
+            # Scale for UV interpolation
+            img = np.array(img.resize(scaled_img_size, Image.Resampling.BICUBIC))
+            depth_arr = np.array(Image.open(depth_path).resize(scaled_img_size, Image.Resampling.BICUBIC))
+            uv_img = cv2.imread(uv_path, cv2.IMREAD_UNCHANGED)
             uv_img = cv2.cvtColor(uv_img, cv2.COLOR_BGR2RGB)
-            out_img = Image.open(out_txt_path)
-            alpha_img = Image.open(alpha_path)
+            uv_img = cv2.resize(uv_img, scaled_img_size, interpolation=cv2.INTER_CUBIC)
+            alpha_img = Image.open(alpha_path).resize(scaled_img_size, Image.Resampling.BICUBIC)
+
             # diffuse_img = Image.open(diffuse_path)
 
             uv_img_arr = np.asarray(uv_img)
+            uv_img_arr = np.clip(uv_img_arr, 0, 1.0)
             img_arr = np.asarray(img)
+
+            out_img = Image.open(out_txt_path)
             out_img_arr = np.array(out_img)
             wip_out_img_arr = out_img_arr.copy()
             # diffuse_img_arr = np.array(diffuse_img)
@@ -101,20 +128,19 @@ class Handler(BaseHTTPRequestHandler):
                     a = src_alpha_arr[x][y]
                     if a > 244 and sum([u, v, w]) > 0.00000001:
                         u2 = int(out_img_arr.shape[1] - 1) - int(out_img_arr.shape[1] * v) - 1
-                        v2 = int(out_img_arr.shape[0] * u)
+                        v2 = int(out_img_arr.shape[0] * u) - 1
+
                         if depth_based_mixing and sum(out_img_arr[u2, v2]) > 0:
-                            depth = depth_arr[x][y]
-                            factor = np.clip(depth, 0, 0.5)
-                            factor *= 2
-                            wip_out_img_arr[u2, v2] = img_arr[x][y] * (1 - factor) + out_img_arr[u2, v2] * factor
+                            depth = (np.clip(depth_arr[x][y][0] / 255, 0, 0.5) * 2) ** 2
+                            wip_out_img_arr[u2, v2] = img_arr[x][y] * (1 - depth) + out_img_arr[u2, v2] * depth
                         else:
                             wip_out_img_arr[u2, v2] = img_arr[x][y]
-
-            if not depth_based_mixing:
-                for x in range(out_img_arr.shape[0]):
-                    for y in range(out_img_arr.shape[1]):
-                        if sum(out_img_arr[x, y]) == 0:
-                            out_img_arr[x, y] = wip_out_img_arr[x][y]
+            for x in range(out_img_arr.shape[0]):
+                for y in range(out_img_arr.shape[1]):
+                    if depth_based_mixing:
+                        out_img_arr[x, y] = wip_out_img_arr[x][y]
+                    elif sum(out_img_arr[x, y]) == 0:
+                        out_img_arr[x, y] = wip_out_img_arr[x][y]
 
             out_img_arr = finish_texture(out_img_arr, partial=True)
             out = Image.fromarray(out_img_arr.astype('uint8'), 'RGB')

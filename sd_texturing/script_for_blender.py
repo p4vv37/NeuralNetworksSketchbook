@@ -10,7 +10,7 @@ import shutil
 FRAME_CODE = "{0:0>4}".format(bpy.context.scene.frame_current)
 ROOT_DIR = r"/home/pawel/git/NeuralNetworksSketchbook/sd_texturing/tmp"
 ROOT_PATH = pathlib.Path(ROOT_DIR)
-PROMPT = "An oil painting of a pirate treasure chest, gold, coins, highly detailed, trending on artstation, concept art, Professional"
+PROMPT = "An oil painting of a pirate treasure chest, gold, coins, highly detailed, trending on artstation, concept art, Professional, gold coins on ground, wooden box with wooden cover"
 N_PROMPT = "blue topping, dark, shadows, bright spots, glossy, only gold"
 OUTPUT_TEXTURE_PATH = pathlib.Path(ROOT_DIR) / "txt.png"
 OUTPUT_UV_PATH = pathlib.Path(ROOT_DIR) / F"uv{FRAME_CODE}.exr"
@@ -31,7 +31,7 @@ def setup():
         if node.label == "Output":
             node.base_path = str(pathlib.Path(ROOT_DIR))
 
-    output_image = bpy.data.images.new(str(OUTPUT_TEXTURE_PATH), width=512, height=512)
+    output_image = bpy.data.images.new(str(OUTPUT_TEXTURE_PATH), width=768, height=768)
 
     output_image.file_format = 'PNG'
     output_image.filepath = str(OUTPUT_TEXTURE_PATH)
@@ -51,7 +51,7 @@ def copy_files_for_preview(idx):
         shutil.copyfile(ROOT_PATH / f.name, ROOT_PATH / str(idx) / f.name)
 
 
-def render_view(angle, z_offset=1, radius=7):
+def render_view(angle, z_offset=2, radius=7):
     print(F"Rendering: {angle}")
     # Reload textures:
     for img in bpy.data.images:
@@ -100,12 +100,14 @@ def generate_data():
         "alpha": str(OUTPUT_ALPHA_PATH),
         "diffuse": str(OUTPUT_DIFFUSE_PATH),
         "depth_based_mixing": 1,
+        # "strength": 0.9,
         "seed": SEED
     }
 
 
-def depth2img():
+def depth2img(**kwargs):
     data = generate_data()
+    data.update(kwargs)
     response = requests.get(API_URL + "/depth2img_step", json=data)
     print(response.status_code, response.text)
 
@@ -120,22 +122,29 @@ if __name__ == "__main__":
     setup()
     copy_files_for_preview(0)
 
-    number_of_renders = 3
+    number_of_renders = 4
     for num in range(number_of_renders):
-        angle = 360 * num / (number_of_renders + 1) - 90
+        angle = 360 * num / (number_of_renders) - 90
         render_view(angle)
         depth2img()
         copy_files_for_preview(num + 1)
 
-    number_of_renders = 3
-    for num in range(number_of_renders):
-        angle = 360 * num / (number_of_renders + 1) + 45
-        render_view(angle)
-        depth2img()
-        copy_files_for_preview(num + 1 + 4)
+    # top part problem
+    render_view(-90, z_offset=3, radius=3)
+    depth2img(strength=0.5)
+    
+    #number_of_renders = 4
+    #for num in range(number_of_renders):
+    #    angle = 360 * num / (number_of_renders ) + 45
+    #    render_view(angle)
+    #    depth2img(strength=0.5)
+    #    copy_files_for_preview(num + 1 + 4)
 
-    render_view(0, 6, 2)
-    depth2img()
+    render_view(-90)
+    depth2img(strength=0.5)
+    
+    #render_view(0, 6, 2)
+    #depth2img(strength=0.5)
     finish_texture()
     render_view(0)
     copy_files_for_preview(number_of_renders + 2 + 4)
