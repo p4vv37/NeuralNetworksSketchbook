@@ -1,12 +1,14 @@
 [Differentiable]
-float3 brightness(float3 ammount, float3 pixel)
+float4 brightness(float4 ammount, float4 pixel)
 {
-    pixel += ammount;
+    pixel.rgb += ammount.rgb;
+    pixel.a = 1.0;
     return pixel;
 }
 
-float3 brightness_inplace(float3 ammount, inout float3 pixel)
+float4 brightness_inplace(float4 ammount, inout float4 pixel)
 {
-    pixel += ammount;
+    pixel.rgb += ammount.rgb;
+    pixel.a = 1.0;
     return pixel;
 }
